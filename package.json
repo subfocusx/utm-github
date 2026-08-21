@@ -1,0 +1,32 @@
+{
+  "name": "utm-github",
+  "version": "0.1.0",
+  "description": "GitHub REST tools for DeepSeek Harness (Cordis plugin): user, repo info, repo search, file put, issues, gists, releases, topics. Token supplied at deploy time via config.token, config.token_path or the GITHUB_TOKEN env var — never hardcoded in source.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node test/run-tests.mjs"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.7"
+  },
+  "keywords": [
+    "dsh",
+    "cordis",
+    "github",
+    "git",
+    "rest",
+    "api",
+    "plugin"
+  ],
+  "license": "MIT"
+}
