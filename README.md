@@ -9,10 +9,14 @@ Cordis-плагин для DeepSeek Harness: тулы `github_*` поверх Gi
 | `github_user` | свой профиль по токену или чужой по `login` |
 | `github_repo_get` | метаданные репозитория (`owner/repo` или URL) |
 | `github_repo_search` | поиск репозиториев по web-индексу |
+| `github_repo_create` | создать репозиторий под авторизованным пользователем |
+| `github_repo_delete` | удалить репозиторий (нужен `confirm=true`, необратимо) |
 | `github_repo_topics` | задать topics репозитория (PUT, полная замена) |
 | `github_file_put` | создать/обновить файл через Contents API (коммит без локального git) |
 | `github_issue_create` | открыть issue |
+| `github_issue_close` | закрыть issue по номеру |
 | `github_gist_create` | создать gist |
+| `github_gist_delete` | удалить gist по ID |
 | `github_release_create` | создать релиз с тегом |
 
 ## Токен
