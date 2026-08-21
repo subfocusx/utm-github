@@ -1,8 +1,9 @@
 /**
  * utm-github — Cordis plugin for DeepSeek Harness.
  *
- * Registers the github_* tool family (user, repo get/search/topics, file put,
- * issues, gists, releases) as a thin layer over the GitHub REST API.
+ * Registers the github_* tool family (user, repo get/create/delete/search/topics,
+ * file put, issues create/close, gists create/delete, releases) as a thin layer
+ * over the GitHub REST API.
  *
  * The token is never in the repo: it is supplied at deploy time via
  * config.token, config.token_path (a file path) or the GITHUB_TOKEN env var.
