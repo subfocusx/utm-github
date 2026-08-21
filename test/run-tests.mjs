@@ -125,6 +125,46 @@ console.log('\n— githubRequest query + body + errors:')
   }
 }
 
+console.log('\n— githubRequest retries:')
+{
+  const originalFetch = globalThis.fetch
+  let attempts = 0
+  globalThis.fetch = async (url) => {
+    attempts++
+    // Two 500s, then success — verifies backoff retry.
+    if (attempts <= 2) {
+      return new Response('oops', { status: 503, headers: { 'content-type': 'text/plain' } })
+    }
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  try {
+    const data = await githubRequest({ token: 't' }, 'GET', '/user', { retries: 2 })
+    ok('retries 5xx until success', attempts === 3 && data.ok === true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  attempts = 0
+  globalThis.fetch = async () => {
+    attempts++
+    return new Response(JSON.stringify({ message: 'Nope' }), {
+      status: 404,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  let err
+  try {
+    await githubRequest({}, 'GET', '/repos/o/nope', { retries: 2 })
+  } catch (e) {
+    err = e
+  }
+  ok('does not retry 4xx', attempts === 1 && /HTTP 404/.test(err.message))
+  globalThis.fetch = originalFetch
+}
+
 // ---------------------------------------------------------------------------
 // buildTools catalogue shape
 // ---------------------------------------------------------------------------
@@ -136,10 +176,14 @@ console.log('\n— buildTools catalogue:')
     'github_user',
     'github_repo_get',
     'github_repo_search',
+    'github_repo_create',
+    'github_repo_delete',
     'github_repo_topics',
     'github_file_put',
     'github_issue_create',
+    'github_issue_close',
     'github_gist_create',
+    'github_gist_delete',
     'github_release_create',
   ]
   eq('tool names', names, expected)
@@ -151,10 +195,15 @@ console.log('\n— buildTools catalogue:')
   for (const [name, req] of [
     ['github_repo_get', 'slug'],
     ['github_repo_search', 'query'],
+    ['github_repo_create', 'name'],
+    ['github_repo_delete', 'slug'],
+    ['github_repo_delete', 'confirm'],
     ['github_repo_topics', 'slug'],
     ['github_file_put', 'slug'],
     ['github_file_put', 'path'],
     ['github_issue_create', 'title'],
+    ['github_issue_close', 'issue_number'],
+    ['github_gist_delete', 'gist_id'],
     ['github_release_create', 'tag_name'],
   ]) {
     const t = tools.find((x) => x.name === name)
@@ -183,6 +232,56 @@ console.log('\n— handlers:')
     const out = await repo.handler({ slug: 'https://github.com/o/r.git' })
     ok('normalizes URL + .git', gotPath === '/repos/o/r')
     ok('returns repo shape', out.full_name === 'o/r' && out.private === true && out.owner === null)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+}
+
+console.log('\n— handlers (create/close/delete):')
+{
+  const cfg = { token: 't' }
+  const tools = buildTools(() => cfg)
+
+  // repo_delete guard: confirm required before DELETE.
+  const del = tools.find((t) => t.name === 'github_repo_delete')
+  let guardErr
+  try {
+    await del.handler({ slug: 'o/r' })
+  } catch (e) {
+    guardErr = e
+  }
+  ok('repo_delete refuses without confirm', /confirm/.test(guardErr?.message ?? ''))
+
+  let calls = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    calls.push({ path: new URL(String(url)).pathname, method: init?.method, body: JSON.parse(init?.body ?? '{}') })
+    const ok = { ok: true }
+    return new Response(JSON.stringify(ok), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    await del.handler({ slug: 'o/r', confirm: true })
+    const delCall = calls.find((c) => c.method === 'DELETE')
+    ok('repo_delete issues DELETE', calls.length === 1 && delCall?.path === '/repos/o/r')
+
+    calls = []
+    const close = tools.find((t) => t.name === 'github_issue_close')
+    await close.handler({ slug: 'https://github.com/o/r', issue_number: 5 })
+    const patch = calls.find((c) => c.method === 'PATCH')
+    ok('issue_close PATCHes correct path+state', patch?.path === '/repos/o/r/issues/5' && patch?.body?.state === 'closed')
+
+    calls = []
+    const gdel = tools.find((t) => t.name === 'github_gist_delete')
+    await gdel.handler({ gist_id: 'abc123' })
+    const gdelCall = calls.find((c) => c.method === 'DELETE')
+    ok('gist_delete issues DELETE', gdelCall?.path === '/gists/abc123')
+
+    calls = []
+    const create = tools.find((t) => t.name === 'github_repo_create')
+    const out = await create.handler({ name: 'demo', private: true, description: 'd' })
+    const post = calls.find((c) => c.method === 'POST')
+    ok('repo_create POSTs /user/repos', post?.path === '/user/repos' && post?.body?.name === 'demo' && post?.body?.private === true)
+    ok('repo_create returns repoOut', out.name === null)
   } finally {
     globalThis.fetch = originalFetch
   }
