@@ -5,14 +5,18 @@
  * (index.js) binds these through defineTool and handles error surfacing.
  *
  * Tools (all prefixed github_):
- *   github_user         — current authenticated user (or /users/{login} if given)
- *   github_repo_get     — repository metadata
- *   github_repo_search  — search repositories (web index)
- *   github_repo_topics  — set repository topics
- *   github_file_put     — create or update one file via the Contents API
- *   github_issue_create — open an issue
- *   github_gist_create  — create a gist
- *   github_release_create — create a release
+ *   github_user            — current authenticated user (or /users/{login} if given)
+ *   github_repo_get        — repository metadata
+ *   github_repo_search     — search repositories (web index)
+ *   github_repo_create     — create a repository under the authenticated user
+ *   github_repo_delete     — delete a repository (needs confirm=true)
+ *   github_repo_topics     — set repository topics
+ *   github_file_put        — create or update one file via the Contents API
+ *   github_issue_create    — open an issue
+ *   github_issue_close     — close an issue
+ *   github_gist_create     — create a gist
+ *   github_gist_delete     — delete a gist
+ *   github_release_create  — create a release
  */
 
 import { githubRequest, resolveToken } from './client.js'
@@ -79,6 +83,29 @@ async function repoSearch(config, args) {
   }
 }
 
+async function repoCreate(config, args) {
+  const name = String(args.name ?? '').trim()
+  if (!name) throw new Error('name: имя репозитория обязательно')
+  const body = { name }
+  if (args.description != null) body.description = String(args.description)
+  if (args.homepage) body.homepage = String(args.homepage)
+  if (args.private != null) body.private = Boolean(args.private)
+  if (args.has_issues != null) body.has_issues = Boolean(args.has_issues)
+  if (args.has_wiki != null) body.has_wiki = Boolean(args.has_wiki)
+  if (args.auto_init != null) body.auto_init = Boolean(args.auto_init)
+  const data = await githubRequest(config, 'POST', '/user/repos', { body })
+  return repoOut(data)
+}
+
+async function repoDelete(config, args) {
+  const { owner, repo } = slug(args.slug, 'github_repo_delete')
+  if (args.confirm !== true) {
+    throw new Error('confirm: установите confirm=true — удаление репозитория необратимо')
+  }
+  await githubRequest(config, 'DELETE', `/repos/${owner}/${repo}`)
+  return { owner, repo, deleted: true }
+}
+
 async function repoTopics(config, args) {
   const { owner, repo } = slug(args.slug, 'github_repo_topics')
   const names = Array.isArray(args.topics) ? args.topics.map(String) : []
@@ -120,6 +147,18 @@ async function issueCreate(config, args) {
   return { number: data?.number ?? null, title: data?.title ?? null, html_url: data?.html_url ?? null, state: data?.state ?? null }
 }
 
+async function issueClose(config, args) {
+  const { owner, repo } = slug(args.slug, 'github_issue_close')
+  const number = Number(args.issue_number)
+  if (!Number.isInteger(number) || number < 1) {
+    throw new Error('issue_number: номер issue обязателен')
+  }
+  const data = await githubRequest(config, 'PATCH', `/repos/${owner}/${repo}/issues/${number}`, {
+    body: { state: 'closed' },
+  })
+  return { number: data?.number ?? null, title: data?.title ?? null, html_url: data?.html_url ?? null, state: data?.state ?? null }
+}
+
 async function gistCreate(config, args) {
   const files = {}
   const fileNames = Array.isArray(args.files) ? args.files : [args.file].filter(Boolean)
@@ -138,6 +177,13 @@ async function gistCreate(config, args) {
     body: { files, description: args.description ?? null, public: Boolean(args.public) },
   })
   return { id: data?.id ?? null, html_url: data?.html_url ?? null, files: Object.keys(data?.files ?? files) }
+}
+
+async function gistDelete(config, args) {
+  const id = String(args.gist_id ?? '').trim()
+  if (!id) throw new Error('gist_id: ID gist (например из github_gist_create)')
+  await githubRequest(config, 'DELETE', `/gists/${encodeURIComponent(id)}`)
+  return { gist_id: id, deleted: true }
 }
 
 async function releaseCreate(config, args) {
@@ -190,6 +236,29 @@ export function buildTools(makeConfig) {
       handler: async (args) => repoSearch(makeConfig(), args),
     },
     {
+      name: 'github_repo_create',
+      description: 'Создать репозиторий под авторизованным пользователем (POST /user/repos).',
+      parameters: {
+        name: { type: 'string', required: true, description: 'Имя репозитория.' },
+        description: { type: 'string', description: 'Описание.' },
+        homepage: { type: 'string', description: 'Сайт / homepage.' },
+        private: { type: 'boolean', description: 'Приватный? (по умолчанию false).' },
+        has_issues: { type: 'boolean', description: 'Включить Issues (по умолчанию true).' },
+        has_wiki: { type: 'boolean', description: 'Включить Wiki.' },
+        auto_init: { type: 'boolean', description: 'Создать с README (по умолчанию false).' },
+      },
+      handler: async (args) => repoCreate(makeConfig(), args),
+    },
+    {
+      name: 'github_repo_delete',
+      description: 'Удалить репозиторий (DELETE /repos/{owner}/{repo}). НЕОБРАТИМО — требует confirm=true.',
+      parameters: {
+        slug: { type: 'string', required: true, description: 'owner/repo или URL.' },
+        confirm: { type: 'boolean', required: true, description: 'true для подтверждения удаления.' },
+      },
+      handler: async (args) => repoDelete(makeConfig(), args),
+    },
+    {
       name: 'github_repo_topics',
       description: 'Задать список topics репозитория (PUT /repos/{owner}/{repo}/topics). Полностью заменяет текущий список.',
       parameters: {
@@ -225,6 +294,15 @@ export function buildTools(makeConfig) {
       handler: async (args) => issueCreate(makeConfig(), args),
     },
     {
+      name: 'github_issue_close',
+      description: 'Закрыть issue в репозитории (PATCH state=closed).',
+      parameters: {
+        slug: { type: 'string', required: true, description: 'owner/repo или URL.' },
+        issue_number: { type: 'integer', required: true, description: 'Номер issue (не id, а number).' },
+      },
+      handler: async (args) => issueClose(makeConfig(), args),
+    },
+    {
       name: 'github_gist_create',
       description: 'Создать gist: либо {file, file_name, content}, либо массив {name, content} в files.',
       parameters: {
@@ -236,6 +314,14 @@ export function buildTools(makeConfig) {
         public: { type: 'boolean', description: 'Публичный? (по умолчанию false).' },
       },
       handler: async (args) => gistCreate(makeConfig(), args),
+    },
+    {
+      name: 'github_gist_delete',
+      description: 'Удалить gist по ID (DELETE /gists/{gist_id}).',
+      parameters: {
+        gist_id: { type: 'string', required: true, description: 'ID gist.' },
+      },
+      handler: async (args) => gistDelete(makeConfig(), args),
     },
     {
       name: 'github_release_create',
